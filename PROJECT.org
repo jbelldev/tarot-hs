@@ -1,0 +1,410 @@
+#+title: Tarot
+#+date: 2024-10-26
+#+author: Jordan Bell
+#+email: jbell.anthony@gmail.com
+#+startup: content
+
+Tarot is quick, but thorough project for dealing with Tarot cards. Using Haskell's powerful type system, we can build a project that effectively describes what Tarot /is/ more than how to use it. It makes for an intuitive way of handling Tarot cards, and is easily extensible.
+
+* Planning
+** Tasks
+*** DONE Adopt Tarot code into literate source [100%]
+**** DONE Adopt minor arcana types into literate source
+**** DONE Adopt major arcana types into literate source
+**** DONE Refactor minor and major arcana into Tarot type
+**** DONE Use TemplateHaskell for creating Uniform instances
+**** DONE Adopt Tarot project file into literate source
+*** TODO Package Tarot for Guix consumption
+
+
+* Source
+:PROPERTIES:
+:header-args: :tangle no :eval no
+:END:
+
+For the most part, the pursuit of this project is to attempt a simple project for practicing three major programming styles: Type-Driven Development, Algebra-Driven Development, and Literate Programming. I believe Tarot lends itself well to the first, Org to the last, and Haskell to all three. Still, this is a new venture for me: expect warts ahead, even if only in style.
+
+** Cards
+:PROPERTIES:
+:header-args: :noweb-ref section_Cards :noweb-sep "\n\n"
+:END:
+
+Tarot cards are pretty simple: they're just playing cards at the end of the day. Defining them is easy by using a type-system, more so with the power of Haskell's type system. For that, we can start from the bottom, and define basic value types that we'll use to construct a more complex relationship from later on, especially with respect to randomness. For now, we'll just define the cards.
+
+Under Tarot, there are two systems of cards: minor and major arcana. The minor arcana are closer to the standard playing cards known by most people, while the major arcana are singular, simple concepts. Both lend themselves well to good ol' type calculus, hence the use of Haskell.
+
+*** Minor Arcana
+**** Ranks
+Minor arcana are more-or-less like a standard deck of playing cards, with the only difference from my neck of the woods being that the Jack is replaced by the Paige and Knight. We'll lay them out in one basic sum type called Rank, ordered by ascending value:
+
+#+name: type_Rank_def
+#+begin_src haskell
+{- | 'Rank' defines the 14 possible ranks of the minor arcana,
+ - 10 pip cards and 4 court/face cards.
+ -}
+data Rank
+  = Ace   | Two    | Three | Four | Five
+  | Six   | Seven  | Eight | Nine | Ten
+  | Paige | Knight | Queen | King
+  -- | Ranks are bounded, sequenced, finite, and have uniform distribution.
+  -- Deriving these classes allow us to have type-level functions for getting random elements,
+  -- a theme we'll repeat with other typeclasses.
+  deriving (Bounded, Enum, Eq, Ord, Show, Generic, Finite, Uniform)
+#+end_src
+
+If you're familiar with Haskell, you can intuit why we'd derive the basic typeclasses seen here for Ranks:
+
+- Bounded :: Ranks have maximum and minimum values, making them bounded. This will be useful for list comprehensions, where we can rely on the min and max Ranks to set limits for the cards.
+- Enum :: Ranks have sequence, so they are enumerable. This will also work well with list comprehensions, but is also *very* important for our randomization.
+- Eq :: Ranks can be equal, and checking equality will be necessary for card comparison.
+- Ord :: Ranks have increasing value, with ~Two~ being greater than ~One~, also good for card comparison.
+- Show :: Displaying a Rank would just show its name, so the *Show* typeclass is a perfect fit.
+
+These are obvious uses, but we should note the power in the combination of *Bounded* and *Enum*: using them together indicates that our type has a floor and ceiling, as well as sequencing. We'll see the power of this in a bit.
+
+The next typeclass, *Generic*, is special: it's used to allow us to morph the values of any given datatype into some values of another typeclass. For our usage, we'll want to do this for the remaining two typeclasses: *Finite* and *Uniform*. We'll also need a special language pragma to use
+
+#+begin_src haskell :noweb-ref pragmas :noweb-sep "\n"
+{-# LANGUAGE DeriveAnyClass #-}
+#+end_src
+
+to unlock its full power, though; it allows us to make use of all the power of generic programming for our derived random functions.
+
+Speaking of which, *Finite* and *Uniform* are typeclasses provided by the random package under _System.Random.Stateful_, and using it allows us to use type-level shenanigans to handle our random selection of cards. This is where our definitions of *Bounded* and *Enum* come in handy: since we've defined our type such that its both enumerated and bound, we have the minimal required definitions to allow the compiler to derive the necessary functions for *Uniform* and *UniformRange*, typeclasses that will automatically figure out how to randomize our results.
+
+This is because we defined *Rank* in terms that imply uniform and finite distribution, which we can generically derive functions for grabbing random values for. Now that we know the names and meanings, we can look over a simple example:
+
+#+name: ex_Rank_randomness
+#+begin_src haskell :eval yes :noweb-ref nil
+import System.Random.Stateful
+
+-- Tell the compiler to give us a random value for Rank from rng
+uniformM globalStdGen :: IO Rank
+#+end_src
+
+#+RESULTS: ex_Rank_randomness
+: Eight
+
+**** Suits
+Minor arcana also have suits like most basic playing cards, though they are more esoteric. This will follow the same procedure as with Ranks:
+
+#+name: type_Suit
+#+begin_src haskell
+-- | 'Suit' defines the possible suits for the minor arcana.
+data Suit = Wands | Cups | Swords | Pentacles
+  deriving (Bounded, Enum, Eq, Show, Generic, Finite, Uniform)
+#+end_src
+
+*NOTE:* We've used both *Bounded* and *Enum* here, but not *Ord*. *Ord* is what tells us that one value is greater or lesser than another, which *does not hold for Suits*. They are neither greater or lesser, only equal, and only enumerated / sequential.
+
+*** Major Arcana
+The Tarot major arcana are actually simpler than the minor, since they don't have two parts, just one. This will be a simple sum type as well, with some familiar instance definitions as well:
+
+#+name: type_MajorArcana
+#+begin_src haskell
+-- | 'MajorArcana' defines the 22 major arcana.
+data MajorArcana
+  = TheFool        | TheMagician | TheHighPriestess | TheEmpress | TheEmperor
+  | TheHierophant  | TheLovers   | TheChariot       | Strength   | TheHermit
+  | WheelOfFortune | Justice     | TheHangedMan     | Death      | Temperance
+  | TheDevil       | TheTower    | TheStar          | TheMoon    | TheSun
+  | Judgement      | TheWorld
+  deriving (Eq, Enum, Show, Bounded, Generic, Finite, Uniform)
+#+end_src
+
+*** Tarot Cards
+With this, we can build constructors for our cards. They have two varieties, major and minor, and we'll construct a new type for holding those values:
+
+#+name: type_Tarot
+#+begin_src haskell
+{- | 'Tarot' has two kinds, for minor and major arcana, as well as a bool for
+ - representing when the card is reversed.
+ - 'Minor' has rank, suit, and reversed status.
+ - 'Major' has the major arcana and the reversed status.
+ -}
+data Tarot
+  = MinorCard Rank Suit Bool
+  | MajorCard MajorArcana Bool
+  deriving (Eq, Generic, Finite, Uniform)
+#+end_src
+
+This simple part mirrors what we've already done with the rest of our types, but it does lack some of our commonly used typeclasses. We still need to define some rules for *Bounded* and *Enum*, but we can't actually derive the automatically here: the types are no longer basic sum types, but are now product types, and the compiler doesn't know the order they're enumerated or bound in. For that matter, we'll have to define the instance ourselves:
+
+#+name: type_Tarot_instance_Enum
+#+begin_src haskell
+{- | Enumeration rules for tarot cards:
+ - Minor Arcana => 14 Ranks * 4 Suits * 2 Reversed states = 112 values
+ - Major Arcana => 22 arcana * 2 Reversed states = 44 values
+ - total: 156
+ -}
+instance Enum Tarot where
+  toEnum index
+    | index < 0 || 156 <= index = error "Out of bounds for Tarot cards"
+    | index < 112 = MinorCard (toEnum rank) (toEnum suit) (toEnum reversed)
+    | 112 <= index && index < 134 = MajorCard (toEnum arcana) False
+    | otherwise = MajorCard (toEnum arcana) True
+    where
+      (index', rank) = index `divMod` 14
+      (reversed, suit) = index' `divMod` 4
+      arcana = (index - 112) `mod` 22
+
+  -- | Shorcut the enumeration for minor and major cards separately to ease the
+  -- math burden some.
+  fromEnum (MinorCard rank suit reversed)
+    = fromEnum rank
+    + fromEnum suit * 14
+    + fromEnum reversed * 56
+  fromEnum (MajorCard arcana reversed)
+    = 112
+    + fromEnum arcana
+    + fromEnum reversed * 22
+
+  -- | Add the canonical boundaries to the enumerate commands to prevent errors
+  enumFrom x = enumFromTo x maxBound
+  enumFromThen x y = enumFromThenTo x y bound
+    where
+      bound | fromEnum y >= fromEnum x = maxBound
+            | otherwise                = minBound
+
+-- | Set the minimum and maximum bounds to those of the minor and major arcana cards, respectively
+instance Bounded Tarot where
+  minBound = MinorCard minBound minBound minBound
+  maxBound = MajorCard maxBound maxBound
+#+end_src
+
+Tarot cards need a special function for the *Show* typeclass. We can construct a simple one based on their actual type names:
+
+#+name: type_Tarot_instance_Show
+#+begin_src haskell
+-- | Show instance of 'Tarot' for pretty printing.
+instance Show Tarot where
+  show (MinorCard rank suit False) = show rank ++ " of " ++ show suit
+  show (MinorCard rank suit True)  = show rank ++ " of " ++ show suit ++ " (reversed)"
+  show (MajorCard arcana isReversed)
+    | isReversed = words' (show arcana) ++ " (reversed)"
+    | otherwise  = words' (show arcana)
+    where
+      -- | words' is a helper function that will separate arcana into words
+      -- wherever there's a capital letter
+      words' [] = []
+      words' (capital:rest)
+        = (capital : takeWhile isLower rest)
+        ++ case dropWhile isLower rest of
+            "" -> ""
+            nextCapital' -> ' ' : words' nextCapital'
+#+end_src
+
+We can see, though, that ~words'~ isn't the standard ~words~ function, and will need the function ~isLower~ from the ~Data.Char~ library, which we'll need to include in our imports with src_haskell[:noweb-ref nil :exports none]{import Data.Char (isLower)}.
+
+With that, here's a demonstration of the typeclass at work:
+
+#+name: test_Tarot_instance_Show
+#+begin_src haskell :noweb-ref nil :eval yes :results verbatim
+map show [MinorCard Three Wands False, MajorCard TheFool False, MajorCard TheWorld True]
+#+end_src
+
+#+RESULTS: test_Tarot_instance_Show
+: ["Three of Wands","The Fool","The World (reversed)"]
+
+** Randomness
+:PROPERTIES:
+:header-args: :noweb-ref section_Random :noweb-sep "\n\n"
+:END:
+
+*** Individual Cards
+
+With the structure of the completed, we can return to those strange typeclasses we defined before, *Uniform*. *Uniform* is a "class of types for which a uniformly distributed value can be drawn from all possible values of the type", which pairs well for our card definitions. Using this simple implementation, we can craft some useful functions for import.
+
+First is for getting a random Tarot card. It's actually simpler than fetching other variants, so we'll define it first.
+
+#+name: func_randomTarot
+#+begin_src haskell
+{- | 'randomTarot' generates a random tarot card, either Minor or Major Arcana,
+ - with equal probability. The rank, suit, or card, and orientation (reversed or not)
+ - are chosen randomly.
+ -}
+randomTarot :: IO Tarot
+randomTarot = uniformM globalStdGen
+#+end_src
+
+Here, we make use of *Uniform*'s ~uniformM~ function; because we defined all the necessary typeclasses to derive *Uniform*, we have easy access to this function which will automatically create a value from an even distribution of all possible values.
+
+In short: when you give a little work to the type-system, it can give a lot more work back to you.
+
+For more specific types of random generation, we can also supply the function ~uniformEnumRM~ with a range. Due to our type-work, we can see these spelled out in the ranges provided:
+
+#+name: func_randomMinorMajorCard
+#+begin_src haskell
+{- | 'randomMinorCard' generates a random Minor Arcana tarot card,
+ - choosing randomly among all possible ranks, suits, and orientations (reversed or not).
+ -}
+randomMinorCard :: IO Tarot
+randomMinorCard = uniformEnumRM (MinorCard minBound minBound minBound, MinorCard maxBound maxBound maxBound) globalStdGen
+
+{- | 'randomMajorCard' generates a random Major Arcana tarot card,
+ - choosing randomly among all possible cards and orientations (reversed or not).
+ -}
+randomMajorCard :: IO Tarot
+randomMajorCard = uniformEnumRM (MajorCard minBound minBound, MajorCard maxBound maxBound) globalStdGen
+#+end_src
+
+Without using the type-level definitions of randomness, we'd need to implement the same logic within functions explicitly, like so:
+
+#+begin_src haskell :tangle no :noweb-ref nil
+-- | Function for returning a random minor card,
+-- constructed from random Ranks, Suits, and reversed value.
+randomMinorCard :: IO Tarot
+randomMinorCard = do
+  rank <- randomIO :: IO Rank
+  suit <- randomIO :: IO Suit
+  isReversed <- randomIO :: IO Bool
+  return $ MinorArcana rank suit isReversed
+#+end_src
+
+While alright on its own, the application of this type of hand-written logic could build up over time, where as type-magic will work everywhere.
+
+*** Lists
+Our use of the *Uniform* typeclass doesn't end in just individual cards. We can use ~uniformListM~ to creates lists of *Uniform* elements, shortcutting the work needed to do tasks like generate a list of cards.
+
+#+name: func_drawCards
+#+begin_src haskell
+{- | 'drawCards' generates a list of randomly chosen tarot cards.
+ - The length of the list is determined by the input argument.
+ - This function doesn't care about duplicates; for that, see `drawFromDeck`.
+ -}
+drawCards :: Int -> IO [Tarot]
+drawCards num = uniformListM num globalStdGen
+#+end_src
+
+Of course, this isn't the function we'd actually want as our final draw card. For that, we'd want something that pulls uniformly from the list of cards, but also doesn't create duplicates. For our part, we can do this by using a full, standard list of cards, then just shuffling it a bit.
+
+First, our shuffle function, which will work rather simply by just moving cards about. Relatively expensive, I believe, but good enough to get the job done while maintaining exactly what we need: a randomizer that pays attention to the cards that have been dealt.
+
+#+name: func_shuffle
+#+begin_src haskell
+{- | 'shuffle' is a naive implementation of a shuffling function for a list.
+ - It takes the input list and "cuts" it at random points, adding it to the end.
+ - It does this for the lenght of the list.
+ -}
+shuffle :: [a] -> IO [a]
+shuffle []  = return []
+shuffle [x] = return [x]
+shuffle xs = do
+    i <- randomRIO (0, length xs - 1)
+    let (ys, zs) = splitAt i xs
+    rest <- shuffle (ys ++ drop 1 zs)
+    return $ (xs !! i) : rest
+#+end_src
+
+From here, we have some simple work to get this to shuffle a full list of cards, and deal them out as needed. It has some simple checks to ensure we don't pull more cards than are possible or less than we're capable.
+
+#+name: func_drawFromDeck
+#+begin_src haskell
+{- | `drawFromDeck` generates a list of tarot cards as if drawn from a deck.
+ - It creates a list of all possible cards, then `shuffle`s the list.
+ - The input is the number of cards to draw from this deck.
+ - The function produces an error on invalid inputs:
+ -   1) an input greater than the size of the deck of all possible cards
+ -   2) a number less than 1
+ -}
+drawFromDeck :: Int -> IO (Either String [Tarot])
+drawFromDeck n
+  | n < 0 = return $ Left "Cannot draw a negative number of cards"
+  | n > length fullDeck = return $ Left "Cannot draw more cards than the size of the deck"
+  | otherwise = do
+      shuffledDeck <- shuffle fullDeck
+      return $ Right $ take n shuffledDeck
+  where
+    fullDeck = enumFrom minBound :: [Tarot]
+#+end_src
+
+** Main
+Now that all the major work is done, we have some basic scaffolding to do. We'll make us of the ~OverloadedStrings~ pragma, since we don't really want to think about them, and do some importing for necessary functions here as well.
+
+#+name: Tarot_preamble
+#+begin_src haskell :tangle ./Tarot.hs :noweb yes
+{-# LANGUAGE OverloadedStrings #-}
+<<pragmas>>
+
+module Main
+  ( drawFromDeck
+  , Rank(..)
+  , Suit(..)
+  , MajorArcana(..)
+  , Tarot(..)
+  , randomMinorCard
+  , randomMajorCard
+  , randomTarot
+  , main
+  ) where
+
+import Data.Char     (isLower)
+import System.IO     (hFlush,stdout)
+import System.Random.Stateful
+import GHC.Generics  (Generic)
+
+<<section_Cards>>
+
+<<section_Random>>
+
+<<Tarot_main>>
+#+end_src
+
+Last but not least, we have the actual main entry into the program, the CLI, and a little housekeeping function to keep our output clean.
+
+#+name: Tarot_main
+#+begin_src haskell
+{- | 'ordinal' takes an integer and returns its ordinal representation as a string.
+ - For example, 'ordinal 3' returns "3rd".
+ -}
+ordinal :: Int -> String
+ordinal 11 = "11th"
+ordinal 12 = "12th"
+ordinal 13 = "13th"
+ordinal index = show index ++ case (last $ show index) of
+  '1' -> "st"
+  '2' -> "nd"
+  '3' -> "rd"
+  _   -> "th"
+
+{- | The 'main' function prompts the user for a number of cards to draw,
+ - then generates and prints that many random tarot cards.
+ - Each card is printed with its position in the draw (1st, 2nd, etc.) and its details.
+ -}
+main :: IO ()
+main = do
+  putStr "How many cards shall I draw? "
+  hFlush stdout
+  numberOfCards <- readLn :: IO Int
+  result <- drawFromDeck numberOfCards
+  case result of
+    Left err    -> putStrLn $ "Error: " ++ err
+    Right cards -> mapM_ printOrderCard $ zip [1..] cards
+  where
+    printOrderCard (index,card) = putStrLn $ ordinal index ++ ": " ++ show card
+#+end_src
+
+And that's it! The program can be called and ran from CLI, and will run simply draw the number of cards requested.
+
+#+begin_example
+$ tarot
+How many cards shall I draw? 3
+1st: Nine of Swords (reversed)
+2nd: Ten of Cups
+3rd: Ace of Wands
+#+end_example
+
+
+
+* Afterword
+This was a tiny project to explore making use of two particular paradigms I'm not used to: Literate Programming, and Type-Driven Development. I find both ideas fascinating, but have been struggling to actually find time or try to actually make use of them, so I've forced myself to write out a common idea in Haskell using LP and T(ype)DD, and I believe it's mostly effective. I'll say that the biggest issues I faced were adjusting to learning how to write out my ideas as I include the code into the project, and how best to work with types at the forefront and not as an afterthought.
+
+The literate part of Literate Programming was harder than I expected. Not because of documenting the code as I expected it would (it came more naturally than I expected to include code in the docs and the literate source), but because of the context changing between them. I found myself moving away from the more standard cycle of Experiment => Find Failure => Experiment => Find Success => Commit, to instead reasoning more about what exactly I was attempting to write and why, and how to make that reality simple enough for consumption in the literate source. Maybe this was just part of creating a project that might see the light of day off of my SSD for the first time, or maybe it was the result of actually following the Literate Programming ideals and hitting the natural strides of trying to explain the reasoning /as you're writing it/.
+
+Either way, I feel better about Literate Programming as a result. It's definitely more cumbersome than just loading up a source file and editing it, but I feel more agile about it with practice, and I do believe that the extra effort may be worth it. Not totally proven correct there, yet, but we'll see.
+
+As for Type-Driven Development, I still feel like I've made some mistakes here, moreso than just with the LP part of the project. The cumbersome way that *Uniform* is attached to the typeclasses by deriving *Generic* feels heavy, even if its just a library import, and the fact that I don't use it's power in the main function (~drawFromDeck~) feels like I've missed something. Worse yet, I'm not sure if this was the wrong decision: I /prefer/ using *Uniform* over manually writing out the randomness logic, and I believe it's due to wanting to incorporate more type logic, not less.
+
+With that in mind, I think I should focus more on types in the future as Haskell incorporates more features on Dependent Types, just to be able to use them more effectively.
+
+Glad to have actually written this project, by these measures. Worth learning, though we'll see if I actually ever publish this anywhere.

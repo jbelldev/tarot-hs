@@ -1,0 +1,10 @@
+cabal-version: 3.12
+name: Tarot
+version: 1.0.0
+
+executable tarot
+    main-is: Tarot.hs
+    build-depends:
+      , base   ^>=4.19.1.0
+      , random ^>=1.2.1.2
+    default-language: GHC2021
