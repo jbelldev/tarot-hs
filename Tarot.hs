@@ -13,10 +13,14 @@ module Main
   , main
   ) where
 
-import Data.Char     (isLower)
-import System.IO     (hFlush,stdout)
-import System.Random.Stateful
 import GHC.Generics  (Generic)
+import System.IO     (hFlush, stdout, stdin, hIsTerminalDevice)
+import System.Random.Stateful ( randomIO
+                              , globalStdGen
+                              , uniformShuffleListM
+                              , Finite
+                              , Uniform(..)
+                              )
 
 {- | 'Rank' defines the 14 possible ranks of the minor arcana,
  - 10 pip cards and 4 court/face cards.
@@ -24,7 +28,7 @@ import GHC.Generics  (Generic)
 data Rank
   = Ace   | Two    | Three | Four | Five
   | Six   | Seven  | Eight | Nine | Ten
-  | Paige | Knight | Queen | King
+  | Page  | Knight | Queen | King
   -- | Ranks are bounded, sequenced, finite, and have uniform distribution.
   -- Deriving these classes allow us to have type-level functions for getting random elements,
   -- a theme we'll repeat with other typeclasses.
@@ -34,6 +38,25 @@ data Rank
 data Suit = Wands | Cups | Swords | Pentacles
   deriving (Bounded, Enum, Eq, Show, Generic, Finite, Uniform)
 
+-- | 'MinorArcana' combines Ranks and Suits to form its members.
+data MinorArcana = MinorArcana
+  { rank :: Rank
+  , suit :: Suit
+  } deriving (Bounded, Eq, Generic, Finite, Uniform)
+
+instance Enum MinorArcana where
+  fromEnum (MinorArcana rank suit) =
+    (fromEnum rank + (fromEnum suit * 14))
+  toEnum x
+    | x < 0 || x >= 56 = error "index out of bounds"
+    | x == 0 = MinorArcana minBound minBound
+    | otherwise = MinorArcana rank suit
+    where rank = toEnum $ x `mod` 14 :: Rank
+          suit = toEnum $ x `div` 14 :: Suit
+
+instance Show MinorArcana where
+  show (MinorArcana rank suit) = (show rank) <> " of " <> (show suit)
+
 -- | 'MajorArcana' defines the 22 major arcana.
 data MajorArcana
   = TheFool        | TheMagician | TheHighPriestess | TheEmpress | TheEmperor
@@ -41,44 +64,70 @@ data MajorArcana
   | WheelOfFortune | Justice     | TheHangedMan     | Death      | Temperance
   | TheDevil       | TheTower    | TheStar          | TheMoon    | TheSun
   | Judgement      | TheWorld
-  deriving (Eq, Enum, Show, Bounded, Generic, Finite, Uniform)
+  deriving (Eq, Enum, Bounded, Ord, Generic, Finite, Uniform)
+
+instance Show MajorArcana where
+  show x = case x of
+        TheFool -> "The Fool"
+        TheMagician -> "The Magician"
+        TheHighPriestess -> "The High Priestess"
+        TheEmpress -> "The Empress"
+        TheEmperor -> "The Emperor"
+        TheHierophant -> "The Hierophant"
+        TheLovers -> "The Lovers"
+        TheChariot -> "The Chariot"
+        Strength -> "Strength"
+        TheHermit -> "The Hermit"
+        WheelOfFortune -> "Wheel Of Fortune"
+        Justice -> "Justice"
+        TheHangedMan -> "The Hanged Man"
+        Death -> "Death"
+        Temperance -> "Temperance"
+        TheDevil -> "The Devil"
+        TheTower -> "The Tower"
+        TheStar -> "The Star"
+        TheMoon -> "The Moon"
+        TheSun -> "The Sun"
+        Judgement -> "Judgement"
+        TheWorld -> "The World"
 
 {- | 'Tarot' has two kinds, for minor and major arcana, as well as a bool for
  - representing when the card is reversed.
- - 'Minor' has rank, suit, and reversed status.
- - 'Major' has the major arcana and the reversed status.
+ - 'MinorCard' has MinorArcana and reversed status.
+ - 'MajorCard' has MajorArcana and reversed status.
  -}
-data Tarot
-  = MinorCard Rank Suit Bool
-  | MajorCard MajorArcana Bool
+data Tarot where
+  MinorCard :: MinorArcana -> Bool -> Tarot
+  MajorCard :: MajorArcana -> Bool -> Tarot
   deriving (Eq, Generic, Finite, Uniform)
 
 {- | Enumeration rules for tarot cards:
  - Minor Arcana => 14 Ranks * 4 Suits * 2 Reversed states = 112 values
  - Major Arcana => 22 arcana * 2 Reversed states = 44 values
  - total: 156
+ - Tarot is enumerated by minor arcana, then major arcana, all upright.
+ - Then repeats with cards in reversed status.
  -}
 instance Enum Tarot where
   toEnum index
     | index < 0 || 156 <= index = error "Out of bounds for Tarot cards"
-    | index < 112 = MinorCard (toEnum rank) (toEnum suit) (toEnum reversed)
-    | 112 <= index && index < 134 = MajorCard (toEnum arcana) False
-    | otherwise = MajorCard (toEnum arcana) True
+    | index < 56   = MinorCard minor False -- ^ [0-55): Minor arcana (upright)
+    | index < 78   = MajorCard major False -- ^ [56-77): Major arcana (upright)
+    | index < 134  = MinorCard minor True  -- ^ [78-133): Minor arcana (reversed)
+    | 134 <= index = MajorCard major True  -- ^ [134-156): Major arcana (reversed)
     where
-      (index', rank) = index `divMod` 14
-      (reversed, suit) = index' `divMod` 4
-      arcana = (index - 112) `mod` 22
+      minor = toEnum (index `mod` 78)
+      major = toEnum $ (index `mod` 78) - 56
 
   -- | Shorcut the enumeration for minor and major cards separately to ease the
   -- math burden some.
-  fromEnum (MinorCard rank suit reversed)
-    = fromEnum rank
-    + fromEnum suit * 14
-    + fromEnum reversed * 56
+  fromEnum (MinorCard arcana reversed)
+    = fromEnum arcana
+    + fromEnum reversed * 78
   fromEnum (MajorCard arcana reversed)
-    = 112
+    = 56
     + fromEnum arcana
-    + fromEnum reversed * 22
+    + fromEnum reversed * 78
 
   -- | Add the canonical boundaries to the enumerate commands to prevent errors
   enumFrom x = enumFromTo x maxBound
@@ -89,25 +138,15 @@ instance Enum Tarot where
 
 -- | Set the minimum and maximum bounds to those of the minor and major arcana cards, respectively
 instance Bounded Tarot where
-  minBound = MinorCard minBound minBound minBound
+  minBound = MinorCard minBound minBound
   maxBound = MajorCard maxBound maxBound
 
 -- | Show instance of 'Tarot' for pretty printing.
 instance Show Tarot where
-  show (MinorCard rank suit False) = show rank ++ " of " ++ show suit
-  show (MinorCard rank suit True)  = show rank ++ " of " ++ show suit ++ " (reversed)"
-  show (MajorCard arcana isReversed)
-    | isReversed = words' (show arcana) ++ " (reversed)"
-    | otherwise  = words' (show arcana)
-    where
-      -- | words' is a helper function that will separate arcana into words
-      -- wherever there's a capital letter
-      words' [] = []
-      words' (capital:rest)
-        = (capital : takeWhile isLower rest)
-        ++ case dropWhile isLower rest of
-            "" -> ""
-            nextCapital' -> ' ' : words' nextCapital'
+  show (MinorCard arcana False) = show arcana
+  show (MinorCard arcana True)  = show arcana ++ " (reversed)"
+  show (MajorCard arcana False) = show arcana
+  show (MajorCard arcana True)  = show arcana ++ " (reversed)"
 
 {- | 'randomTarot' generates a random tarot card, either Minor or Major Arcana,
  - with equal probability. The rank, suit, or card, and orientation (reversed or not)
@@ -116,37 +155,21 @@ instance Show Tarot where
 randomTarot :: IO Tarot
 randomTarot = uniformM globalStdGen
 
-{- | 'randomMinorCard' generates a random Minor Arcana tarot card,
- - choosing randomly among all possible ranks, suits, and orientations (reversed or not).
+{- | 'randomMinorCard' generates a random Minor Arcana tarot card.
  -}
 randomMinorCard :: IO Tarot
-randomMinorCard = uniformEnumRM (MinorCard minBound minBound minBound, MinorCard maxBound maxBound maxBound) globalStdGen
+randomMinorCard = do
+   arcana <- uniformM globalStdGen :: IO MinorArcana
+   bool <- uniformM globalStdGen :: IO Bool
+   return $ MinorCard arcana bool
 
-{- | 'randomMajorCard' generates a random Major Arcana tarot card,
- - choosing randomly among all possible cards and orientations (reversed or not).
+{- | 'randomMajorCard' generates a random Major Arcana tarot card.
  -}
 randomMajorCard :: IO Tarot
-randomMajorCard = uniformEnumRM (MajorCard minBound minBound, MajorCard maxBound maxBound) globalStdGen
-
-{- | 'drawCards' generates a list of randomly chosen tarot cards.
- - The length of the list is determined by the input argument.
- - This function doesn't care about duplicates; for that, see `drawFromDeck`.
- -}
-drawCards :: Int -> IO [Tarot]
-drawCards num = uniformListM num globalStdGen
-
-{- | 'shuffle' is a naive implementation of a shuffling function for a list.
- - It takes the input list and "cuts" it at random points, adding it to the end.
- - It does this for the lenght of the list.
- -}
-shuffle :: [a] -> IO [a]
-shuffle []  = return []
-shuffle [x] = return [x]
-shuffle xs = do
-    i <- randomRIO (0, length xs - 1)
-    let (ys, zs) = splitAt i xs
-    rest <- shuffle (ys ++ drop 1 zs)
-    return $ (xs !! i) : rest
+randomMajorCard = do
+   arcana <- uniformM globalStdGen :: IO MajorArcana
+   bool <- uniformM globalStdGen :: IO Bool
+   return $ MajorCard arcana bool
 
 {- | `drawFromDeck` generates a list of tarot cards as if drawn from a deck.
  - It creates a list of all possible cards, then `shuffle`s the list.
@@ -155,15 +178,18 @@ shuffle xs = do
  -   1) an input greater than the size of the deck of all possible cards
  -   2) a number less than 1
  -}
-drawFromDeck :: Int -> IO (Either String [Tarot])
-drawFromDeck n
-  | n < 0 = return $ Left "Cannot draw a negative number of cards"
-  | n > length fullDeck = return $ Left "Cannot draw more cards than the size of the deck"
-  | otherwise = do
-      shuffledDeck <- shuffle fullDeck
-      return $ Right $ take n shuffledDeck
-  where
-    fullDeck = enumFrom minBound :: [Tarot]
+drawFromDeck :: Int -> IO [Tarot]
+drawFromDeck n = do
+  -- | Generate a full deck of all upright cards
+  let fullDeck = enumFromTo (MinorCard minBound False) (MajorCard maxBound False) :: [Tarot]
+      flip :: Tarot -> IO Tarot
+      flip (MajorCard arcana _) =  return . MajorCard arcana =<< (randomIO :: IO Bool)
+      flip (MinorCard arcana _) =  return . MinorCard arcana =<< (randomIO :: IO Bool)
+  -- | Shuffle them
+  shuffledDeck <- uniformShuffleListM fullDeck globalStdGen
+  -- | Randomly assign upright and reversed status
+  results <- mapM flip shuffledDeck
+  return $ take n results
 
 {- | 'ordinal' takes an integer and returns its ordinal representation as a string.
  - For example, 'ordinal 3' returns "3rd".
@@ -177,19 +203,23 @@ ordinal index = show index ++ case (last $ show index) of
   '2' -> "nd"
   '3' -> "rd"
   _   -> "th"
-
 {- | The 'main' function prompts the user for a number of cards to draw,
  - then generates and prints that many random tarot cards.
  - Each card is printed with its position in the draw (1st, 2nd, etc.) and its details.
  -}
 main :: IO ()
 main = do
-  putStr "How many cards shall I draw? "
-  hFlush stdout
+  isTerminal <- hIsTerminalDevice stdin
+  if isTerminal
+  then do                
+    -- | For standard input from terminal, ask for cards and flush output
+    putStr "How many cards shall I draw? "
+    hFlush stdout
+  else do
+    -- | For pipes, just flush the output
+    hFlush stdout
   numberOfCards <- readLn :: IO Int
-  result <- drawFromDeck numberOfCards
-  case result of
-    Left err    -> putStrLn $ "Error: " ++ err
-    Right cards -> mapM_ printOrderCard $ zip [1..] cards
+  cards <- drawFromDeck numberOfCards
+  mapM_ printOrderCard $ zip [1..] cards
   where
     printOrderCard (index,card) = putStrLn $ ordinal index ++ ": " ++ show card
